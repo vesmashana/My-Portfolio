@@ -1,0 +1,125 @@
+//The initial bruteforcer model cannot be vectorised 
+//Thus, I convert the recursive model to an iterative one from 1 to L^94 (where L is length of guess)
+#include <iostream>
+#include <chrono>
+#include <immintrin.h>
+
+std::string password;
+std::string guess;
+
+void convertIntToString(long long num, int length) {
+	for (int i = length - 1; i >= 0; i--) {
+		int character = num % 94 + 33;
+		num = num / 94; 
+		guess[i] = static_cast<char>(character);
+
+	}
+	//std::cout << "Guess: " << guess << std::endl;
+}
+
+void DebugConvertandPrint(long long i, unsigned char buf[][8], int length) {//AI-GENERATED!!
+	for (int lane = 0; lane < 8; lane++) {
+		std::printf("Guess [%lld]: ", i + lane);
+		for (int p = 0; p < length; p++) {
+			std::printf("%c", buf[p][lane]);
+		}
+		std::printf("\n");
+	}
+	return;
+}
+
+bool bruteForcer(int length) {
+	for (long long i = 0; i < pow(94, length); i++) {
+		convertIntToString(i, length);
+		if (guess == password) {
+			std::cout << ("Password found: " + guess) << std::endl;
+			return true;
+		}
+	}
+	return false;
+}
+
+void avxConvert(long long numGuess, int length, unsigned char buf[][8]) {
+	//unsigned char buf[][8]: 2D character array, 8 lanes aka guesses,
+	//unspecified number of rows aka string length
+
+	//-----Take num, fill register with 8 guesses numGuess,numGuess+1...etc----//
+	__m256i base = _mm256_set1_epi32((int)numGuess);
+	__m256i increment = _mm256_setr_epi32(0,1,2,3,4,5,6,7);
+	__m256i nums = _mm256_add_epi32(base, increment);
+
+	for (int i = length - 1; i >= 0; i--) {
+		//-----------Num2(chars) = Num1 % 94 + 33----------------//
+		// (remember to reference source of this method)
+		//1. Find values M + s (*M produces same string of numbers, except on a different scale, >>s to get the true value)
+		unsigned int M = 2924233053;
+		int s = 38;
+		//important caveat: if you do numxM on a single num, it can become a 64 bit number. thus the only commands available for this
+		//are commands where it takeseven lanes and multiplies THOSE, so you actually run:
+		// -load M into register
+		__m256i MReg = _mm256_set1_epi32(M);
+		// - multiply even lanes
+		__m256i evenNums = _mm256_mul_epu32(nums, MReg);
+		// - shift odd lanes to the right by 32 bits to make them even lane
+		__m256i oddNums = _mm256_srli_epi64(nums, 32);
+		// - use multiply even lanes on this new register
+		oddNums = _mm256_mul_epu32(oddNums, MReg);
+		//to create 2 big enough registers to hold the numbers, then combine them after >>s when they're 32 bit again
+		//2. newNums = (nums*M) >> s
+		//perform shift
+		evenNums = _mm256_srli_epi64(evenNums, s);//odd lanes are now empty
+		oddNums = _mm256_srli_epi64(oddNums, s);//same for this one
+		//shift odd lanes back to original position - shift LEFT by 32 bits
+		oddNums = _mm256_slli_epi64(oddNums, 32);
+		//combine even and odd lanes to get newNums
+		__m256i newNums = _mm256_add_epi32(evenNums, oddNums);
+		//Note: blend is the safer command to use, but I liked the idea of using add - it's quite intuitive,
+		//because if you follow the logic you can see that every 32-bit addition would be doing number+0
+		//3. To get character bytes, imitate modulus operation by doing chars = nums-newNums*94
+		__m256i ninetyFour = _mm256_set1_epi32(94);
+		ninetyFour = _mm256_mullo_epi32(newNums, ninetyFour);
+		__m256i chars = _mm256_sub_epi32(nums, ninetyFour);
+		//add 33 to get the correct ASCII values
+		__m256i thirtyThree = _mm256_set1_epi32(33);
+		chars = _mm256_add_epi32(chars, thirtyThree);
+		//4. Fill buf with chars
+		alignas(32) unsigned int temp[8];
+		_mm256_storeu_si256((__m256i*)temp, chars);
+		for (int lane = 0; lane < 8; lane++) {
+			buf[i][lane] = static_cast<unsigned char>(temp[lane]);
+		}
+		//5. replace nums with newNums
+		nums = newNums;
+		//---------Fill buf[i] for each guess/lane---------//
+
+		//--------Divide contents of num1 by 94, store in num1--------//
+	}
+}
+
+bool avxBruteforcer(int length) {
+	alignas(32) unsigned char buf[16][8];
+	long long i;
+	for (i = 0; i < pow(94, length); i += 8) {
+		avxConvert(i, length, buf);
+		//vectorised check here
+	}
+	for (i; i < pow(94, length); i++) {
+		//leftovers loop
+	}
+	return true;
+}
+
+int main() {
+	std::cout << "Enter your password: ";
+	std::cin >> password;
+	//-----------Convert password to char array for AVX comparison----------//
+	//----------------------------------------------------------------------//
+	auto start = std::chrono::high_resolution_clock::now();
+	for (int length = 4; length <= 15; length++) {
+		guess.resize(length);
+		if (avxBruteforcer(length)) break;
+	}
+	auto end = std::chrono::high_resolution_clock::now();
+	double secs = std::chrono::duration<double>(end - start).count();
+	std::cout << "Elapsed: " << secs << "s\n";
+}
